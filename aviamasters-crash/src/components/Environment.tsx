@@ -10,7 +10,6 @@ export const Ocean = () => {
       uTime: { value: 0 },
       uColor: { value: new THREE.Color('#001a33') },
       uGlowColor: { value: new THREE.Color('#00ff9d') },
-      uPlanePos: { value: new THREE.Vector3(0, 0, 0) }
     },
     vertexShader: `
       varying vec2 vUv;
@@ -35,14 +34,11 @@ export const Ocean = () => {
       varying float vElevation;
       uniform vec3 uColor;
       uniform vec3 uGlowColor;
-      uniform vec3 uPlanePos;
       
       void main() {
-        float dist = distance(vUv * 20.0, uPlanePos.xz);
-        float glow = exp(-dist * 0.5) * 0.5;
-        
+        // Optimized: removed per-frame distance calculation for plane position in fragment shader
+        // Using elevation for a more performant glow effect
         vec3 finalColor = mix(uColor, uGlowColor, vElevation * 0.5 + 0.5);
-        finalColor += uGlowColor * glow;
         
         gl_FragColor = vec4(finalColor, 0.8);
       }

@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { PerspectiveCamera, OrbitControls } from '@react-three/drei';
+import { PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import gsap from 'gsap';
 import { UIOverlay } from './components/UIOverlay';
@@ -14,18 +14,39 @@ import { Plane } from './components/Plane';
 import { Missile } from './components/Missile';
 import { PostEffects } from './components/PostEffects';
 import { EffectComposer } from '@react-three/postprocessing';
+import { useGameStore } from './store/gameStore';
 
-// Camera Shake Component
-const CameraController = ({ isShaking }: { isShaking: boolean }) => {
+// Camera Controller with GSAP Shake
+const CameraController = () => {
   const { camera } = useThree();
   const initialPos = useRef(new THREE.Vector3(0, 5, 15));
+  const gameState = useGameStore(state => state.gameState);
 
-  useFrame((state) => {
-    if (isShaking) {
-      const shake = 0.2;
-      camera.position.x = initialPos.current.x + (Math.random() - 0.5) * shake;
-      camera.position.y = initialPos.current.y + (Math.random() - 0.5) * shake;
-    } else {
+  useEffect(() => {
+    if (gameState === 'CRASHED') {
+      // GSAP Camera Shake
+      const tl = gsap.timeline();
+      tl.to(camera.position, {
+        x: '+=0.5',
+        y: '+=0.5',
+        duration: 0.05,
+        repeat: 10,
+        yoyo: true,
+        ease: "power1.inOut",
+        onComplete: () => {
+          gsap.to(camera.position, {
+            x: initialPos.current.x,
+            y: initialPos.current.y,
+            z: initialPos.current.z,
+            duration: 0.5
+          });
+        }
+      });
+    }
+  }, [gameState, camera]);
+
+  useFrame(() => {
+    if (gameState !== 'CRASHED') {
       camera.position.lerp(initialPos.current, 0.1);
     }
     camera.lookAt(0, 0, 0);
@@ -34,86 +55,55 @@ const CameraController = ({ isShaking }: { isShaking: boolean }) => {
   return null;
 };
 
-export default function App() {
-  const [gameState, setGameState] = useState<'IDLE' | 'FLYING' | 'CRASHED'>('IDLE');
-  const [multiplier, setMultiplier] = useState(1.0);
-  const [altitude, setAltitude] = useState(0);
-  const [distance, setDistance] = useState(0);
-  const [balance, setBalance] = useState(1000.0);
-  const [bet, setBet] = useState(10.0);
-  const [isShaking, setIsShaking] = useState(false);
-  const [crashPoint, setCrashPoint] = useState(0);
-  
-  const startTime = useRef(0);
-  const requestRef = useRef<number>(0);
-  const planeRef = useRef<any>(null);
+// Game Engine Logic (runs inside Canvas to use useFrame)
+const GameEngine = () => {
+  const { 
+    gameState, 
+    startTime, 
+    crashPoint, 
+    setMultiplier, 
+    setAltitude, 
+    setDistance, 
+    setGameState,
+    resetGame 
+  } = useGameStore();
 
-  const startFlight = useCallback(() => {
-    if (balance < bet) return;
-    
-    setBalance(prev => prev - bet);
-    setGameState('FLYING');
-    setMultiplier(1.0);
-    setAltitude(0);
-    setDistance(0);
-    
-    // Generate random crash point (exponential distribution for house edge)
-    const random = Math.random();
-    const crashAt = Math.max(1.01, 0.99 / (1 - random));
-    setCrashPoint(crashAt);
-    
-    startTime.current = Date.now();
-    setIsShaking(true);
-    setTimeout(() => setIsShaking(false), 500);
-  }, [balance, bet]);
-
-  const cashOut = useCallback(() => {
-    if (gameState !== 'FLYING') return;
-    
-    const winAmount = bet * multiplier;
-    setBalance(prev => prev + winAmount);
-    setGameState('IDLE');
-    // We keep flying but player is out
-  }, [gameState, bet, multiplier]);
-
-  const resetGame = useCallback(() => {
-    setGameState('IDLE');
-    setMultiplier(1.0);
-    setAltitude(0);
-    setDistance(0);
-  }, []);
-
-  useEffect(() => {
+  useFrame(() => {
     if (gameState === 'FLYING') {
-      const update = () => {
-        const elapsed = (Date.now() - startTime.current) / 1000;
-        
-        // Multiplier curve: e^(0.06 * t)
-        const currentMultiplier = Math.pow(Math.E, 0.06 * elapsed);
-        
-        if (currentMultiplier >= crashPoint) {
-          setGameState('CRASHED');
-          setIsShaking(true);
-          setTimeout(() => setIsShaking(false), 300);
-          setTimeout(resetGame, 3000);
-          return;
-        }
+      const elapsed = (Date.now() - startTime) / 1000;
+      
+      // Multiplier curve: e^(0.06 * t)
+      const currentMultiplier = Math.pow(Math.E, 0.06 * elapsed);
+      
+      if (currentMultiplier >= crashPoint) {
+        setGameState('CRASHED');
+        setTimeout(resetGame, 4000);
+        return;
+      }
 
-        setMultiplier(currentMultiplier);
-        setAltitude(Math.floor(Math.pow(elapsed, 2) * 100));
-        setDistance(Math.floor(elapsed * 250));
-        
-        // Move plane up slightly
-        if (planeRef.current?.group) {
-          planeRef.current.group.position.y = Math.sin(elapsed * 0.5) * 2;
-        }
-
-        requestRef.current = requestAnimationFrame(update);
-      };
-      requestRef.current = requestAnimationFrame(update);
+      // Update store (this will trigger UI re-renders for multiplier)
+      // For 3D components, we could use refs, but here we update the store
+      setMultiplier(currentMultiplier);
+      setAltitude(Math.floor(Math.pow(elapsed, 2) * 100));
+      setDistance(Math.floor(elapsed * 250));
     }
-    return () => cancelAnimationFrame(requestRef.current);
-  }, [gameState, crashPoint, resetGame]);
+  });
+
+  return null;
+};
+
+export default function App() {
+  const { 
+    gameState, 
+    multiplier, 
+    altitude, 
+    distance, 
+    balance, 
+    bet,
+    setBet,
+    startFlight,
+    cashOut
+  } = useGameStore();
 
   return (
     <div className="w-full h-full relative overflow-hidden bg-[#050505]">
@@ -125,26 +115,29 @@ export default function App() {
 
       <Canvas shadows dpr={[1, 2]}>
         <PerspectiveCamera makeDefault position={[0, 5, 15]} fov={50} />
-        <CameraController isShaking={isShaking} />
+        <CameraController />
         
         <ambientLight intensity={0.5} />
         <pointLight position={[10, 10, 10]} intensity={1} />
         <spotLight position={[-10, 10, 10]} angle={0.15} penumbra={1} intensity={2} castShadow />
 
-        <Plane 
-          ref={planeRef} 
-          velocityY={gameState === 'FLYING' ? 0.1 : 0} 
-          isCrashed={gameState === 'CRASHED'} 
-        />
+        <Suspense fallback={null}>
+          <Plane 
+            velocityY={gameState === 'FLYING' ? 0.1 : 0} 
+            isCrashed={gameState === 'CRASHED'} 
+          />
+        </Suspense>
         
         <Missile 
           active={gameState === 'CRASHED'} 
-          targetY={planeRef.current?.group?.position?.y || 0} 
+          targetY={0} // Simplified for now
         />
 
         <Ocean />
         <Clouds />
         <Mountains />
+
+        <GameEngine />
 
         <EffectComposer>
           <PostEffects />
