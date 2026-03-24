@@ -1,0 +1,5 @@
+{
+  "name": "AviaMasters Crash",
+  "description": "A high-stakes WebGL crash game with 2.5D parallax environments and cinematic post-processing.",
+  "requestFramePermissions": []
+}
